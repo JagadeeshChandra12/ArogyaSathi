@@ -1,13 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Activity, Heart, Calendar, Target, Zap, Users, ArrowLeft, BarChart3, ActivitySquare, Brain, Plus, Upload, CheckCircle, Clock, Trophy, Medal, Crown } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Calendar, ArrowLeft, Plus, Upload, CheckCircle, Clock, Trophy, Medal, Crown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { userStorageService, HealthData } from '../services/userStorage';
+import { useAuth } from '../context/AuthContext';
+import { isFirebaseConfigured } from '../firebase/config';
+import {
+  firebaseAddHealthData,
+  firebaseGetAllHealthData,
+  firebaseGetAllUsers
+} from '../services/firebaseUserData';
+import { regenerateSummary } from '../services/healthPassportApi';
 
-interface HealthTrend {
-  direction: 'improving' | 'declining' | 'stable';
-  percentage: number;
-  description: string;
-}
+// HealthTrend interface removed as it was unused
 
 interface MonthlySchedule {
   month: string;
@@ -25,42 +29,63 @@ interface LeaderboardEntry {
 }
 
 export default function HealthPage() {
+  const { user: currentUser } = useAuth();
   const [healthData, setHealthData] = useState<HealthData[]>([]);
-  const [currentData, setCurrentData] = useState<HealthData | null>(null);
-  const [previousData, setPreviousData] = useState<HealthData | null>(null);
-  const [healthTrend, setHealthTrend] = useState<HealthTrend | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showInputForm, setShowInputForm] = useState(false);
   const [monthlySchedule, setMonthlySchedule] = useState<MonthlySchedule[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [currentUser] = useState(userStorageService.getCurrentUser());
 
-  // Initialize with user data
-  useEffect(() => {
-    const userHealthData = userStorageService.getUserHealthData();
-    setHealthData(userHealthData);
+  const refreshLeaderboard = useCallback(async () => {
+    let allUsers;
+    let allHealthData;
+    if (isFirebaseConfigured()) {
+      [allUsers, allHealthData] = await Promise.all([
+        firebaseGetAllUsers(),
+        firebaseGetAllHealthData()
+      ]);
+    } else {
+      allUsers = userStorageService.getAllUsers();
+      allHealthData = userStorageService.getAllHealthData();
+    }
 
-    // Generate monthly schedule
-    generateMonthlySchedule();
-    
-    // Generate leaderboard
-    generateLeaderboard();
-    
-    setIsLoading(false);
+    const leaderboardData: LeaderboardEntry[] = [];
+
+    allUsers.forEach((user) => {
+      const userHealthRows = allHealthData.filter((data) => data.userId === user.id);
+      if (userHealthRows.length > 0) {
+        const sorted = [...userHealthRows].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        const latestData = sorted[sorted.length - 1];
+        leaderboardData.push({
+          userId: user.id,
+          userName: `${user.firstName} ${user.lastName}`.trim() || user.email || 'User',
+          healthScore: latestData.healthScore,
+          rank: 0,
+          lastUpdated: latestData.createdAt
+        });
+      }
+    });
+
+    leaderboardData.sort((a, b) => b.healthScore - a.healthScore);
+    leaderboardData.forEach((entry, index) => {
+      entry.rank = index + 1;
+    });
+
+    setLeaderboard(leaderboardData);
   }, []);
 
-  const generateMonthlySchedule = () => {
+  const generateMonthlySchedule = useCallback(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
-    
+
     const schedule: MonthlySchedule[] = [];
-    
+
     for (let i = 0; i < 12; i++) {
       const monthIndex = (currentMonth + i) % 12;
       const year = currentYear + Math.floor((currentMonth + i) / 12);
       const monthName = months[monthIndex];
-      
+
       schedule.push({
         month: `${monthName} ${year}`,
         status: i === 0 ? 'pending' : i < 0 ? 'completed' : 'upcoming',
@@ -68,40 +93,23 @@ export default function HealthPage() {
         healthScore: 0
       });
     }
-    
+
     setMonthlySchedule(schedule);
-  };
+  }, []);
 
-  const generateLeaderboard = () => {
-    const allUsers = userStorageService.getAllUsers();
-    const allHealthData = userStorageService.getAllHealthData();
-    
-    const leaderboardData: LeaderboardEntry[] = [];
-    
-    allUsers.forEach(user => {
-      const userHealthData = allHealthData.filter(data => data.userId === user.id);
-      if (userHealthData.length > 0) {
-        const latestData = userHealthData[userHealthData.length - 1];
-        leaderboardData.push({
-          userId: user.id,
-          userName: `${user.firstName} ${user.lastName}`,
-          healthScore: latestData.healthScore,
-          rank: 0,
-          lastUpdated: latestData.createdAt
-        });
+  const updateMonthlySchedule = useCallback((newData: HealthData) => {
+    setMonthlySchedule(prev => prev.map(item => {
+      if (item.month === newData.month) {
+        return {
+          ...item,
+          status: 'completed' as const,
+          healthScore: newData.healthScore
+        };
       }
-    });
-    
-    // Sort by health score (descending) and assign ranks
-    leaderboardData.sort((a, b) => b.healthScore - a.healthScore);
-    leaderboardData.forEach((entry, index) => {
-      entry.rank = index + 1;
-    });
-    
-    setLeaderboard(leaderboardData);
-  };
-
-  const calculateHealthScore = (data: Partial<HealthData>): number => {
+      return item;
+    }));
+  }, []);
+  const calculateHealthScore = useCallback((data: Partial<HealthData>): number => {
     let score = 100;
     
     // Deduct points for negative factors
@@ -117,47 +125,75 @@ export default function HealthPage() {
     if (data.waterIntake && data.waterIntake >= 6) score += 5;
     
     return Math.max(0, Math.min(100, score));
-  };
-
-  const handleAddHealthData = (newData: Omit<HealthData, 'id' | 'userId' | 'healthScore' | 'createdAt'>) => {
+  }, []);
+  const handleAddHealthData = async (
+    newData: Omit<HealthData, 'id' | 'userId' | 'healthScore' | 'createdAt'>
+  ) => {
     const healthScore = calculateHealthScore(newData);
     const dataWithScore = {
       ...newData,
       healthScore
     };
 
+    if (isFirebaseConfigured() && currentUser) {
+      const displayName =
+        `${currentUser.firstName} ${currentUser.lastName}`.trim() || currentUser.email || 'User';
+      const result = await firebaseAddHealthData(currentUser.id, displayName, dataWithScore);
+      if (result.success && result.data) {
+        setHealthData((prev) => [...prev, result.data!]);
+        updateMonthlySchedule(result.data);
+        await refreshLeaderboard();
+        void regenerateSummary(currentUser.id).catch(() => {});
+        setShowInputForm(false);
+      } else {
+        alert(result.message);
+      }
+      return;
+    }
+
     const result = userStorageService.addHealthData(dataWithScore);
-    
+
     if (result.success) {
-      // Refresh health data
       const updatedHealthData = userStorageService.getUserHealthData();
       setHealthData(updatedHealthData);
-      
-      // Update monthly schedule
       updateMonthlySchedule(result.data!);
-      
-      // Update leaderboard
-      generateLeaderboard();
-      
+      await refreshLeaderboard();
+      if (currentUser?.id) void regenerateSummary(currentUser.id).catch(() => {});
       setShowInputForm(false);
-    } else {
-      alert(result.message);
     }
   };
 
-  const updateMonthlySchedule = (newData: HealthData) => {
-    const updatedSchedule = monthlySchedule.map(item => {
-      if (item.month === newData.month) {
-        return {
-          ...item,
-          status: 'completed' as const,
-          healthScore: newData.healthScore
-        };
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setIsLoading(true);
+      generateMonthlySchedule();
+
+      if (!currentUser) {
+        if (!cancelled) setIsLoading(false);
+        return;
       }
-      return item;
-    });
-    setMonthlySchedule(updatedSchedule);
-  };
+
+      try {
+        if (isFirebaseConfigured()) {
+          const list = await firebaseGetAllHealthData();
+          const userList = list.filter(d => d.userId === currentUser.id);
+          if (!cancelled) setHealthData(userList);
+        } else {
+          if (!cancelled) setHealthData(userStorageService.getUserHealthData());
+        }
+        await refreshLeaderboard();
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, refreshLeaderboard, generateMonthlySchedule]);
 
   const getHealthColor = (score: number) => {
     if (score >= 80) return 'text-green-600';
@@ -169,17 +205,6 @@ export default function HealthPage() {
     if (score >= 80) return 'Excellent';
     if (score >= 60) return 'Good';
     return 'Needs Attention';
-  };
-
-  const getTrendIcon = (direction: string) => {
-    switch (direction) {
-      case 'improving':
-        return <TrendingUp className="text-green-600" size={24} />;
-      case 'declining':
-        return <TrendingDown className="text-red-600" size={24} />;
-      default:
-        return <Activity className="text-blue-600" size={24} />;
-    }
   };
 
   const getStatusIcon = (status: string) => {
@@ -206,11 +231,6 @@ export default function HealthPage() {
       default:
         return <span className="text-gray-600 font-bold">{rank}</span>;
     }
-  };
-
-  const getCurrentUserRank = () => {
-    if (!currentUser) return null;
-    return leaderboard.find(entry => entry.userId === currentUser.id);
   };
 
   if (isLoading) {

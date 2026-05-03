@@ -1,20 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { FaUser, FaHeart, FaWeight, FaRuler, FaEdit, FaSave, FaCamera, FaBell, FaShieldAlt, FaSignOutAlt } from 'react-icons/fa';
+import { useNavigate } from 'react-router-dom';
+import { FaUser, FaHeart, FaEdit, FaSave, FaCamera, FaSignOutAlt } from 'react-icons/fa';
 import { userStorageService } from '../services/userStorage';
+import { useAuth } from '../context/AuthContext';
+import { isFirebaseConfigured } from '../firebase/config';
+import { firebaseGetUserHealthData, firebaseUpdateProfile } from '../services/firebaseUserData';
+import HealthIDCard from '../components/HealthIDCard';
+import { regenerateSummary } from '../services/healthPassportApi';
 
 const ProfilePage: React.FC = () => {
+  const navigate = useNavigate();
+  const { user: currentUser, signOutApp, refreshProfile } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [healthScore, setHealthScore] = useState(0);
   const [reportsCount, setReportsCount] = useState(0);
-  const currentUser = userStorageService.getCurrentUser();
-  
+
   const [profileData, setProfileData] = useState({
-    name: currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : '',
-    email: currentUser?.email || '',
-    phone: currentUser?.phone || '',
+    name: '',
+    email: '',
+    phone: '',
     age: 0,
-    gender: currentUser?.gender || '',
-    bloodGroup: currentUser?.bloodGroup || '',
+    gender: '',
+    bloodGroup: '',
     height: 0,
     weight: 0,
     emergencyContact: {
@@ -24,31 +31,121 @@ const ProfilePage: React.FC = () => {
     }
   });
 
-  const [healthMetrics, setHealthMetrics] = useState({
+  const healthMetrics = {
     bloodPressure: '',
     heartRate: '',
     bloodSugar: '',
     cholesterol: '',
     bmi: ''
-  });
+  };
 
-  // Load health data and calculate score
   useEffect(() => {
-    const healthScore = userStorageService.getUserHealthScore();
-    setHealthScore(healthScore);
+    if (!currentUser) return;
+    setProfileData((prev) => ({
+      ...prev,
+      name: `${currentUser.firstName} ${currentUser.lastName}`.trim() || prev.name,
+      email: currentUser.email || prev.email,
+      phone: currentUser.phone || prev.phone,
+      gender: currentUser.gender || prev.gender,
+      bloodGroup: currentUser.bloodGroup || prev.bloodGroup
+      ,
+      emergencyContact: {
+        ...prev.emergencyContact,
+        phone: currentUser.phone || prev.emergencyContact.phone
+      }
+    }));
+  }, [
+    currentUser?.id,
+    currentUser?.firstName,
+    currentUser?.lastName,
+    currentUser?.email,
+    currentUser?.phone,
+    currentUser?.gender,
+    currentUser?.bloodGroup
+  ]);
 
-    // Load reports count
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!currentUser) return;
+      if (isFirebaseConfigured()) {
+        const data = await firebaseGetUserHealthData(currentUser.id);
+        if (!cancelled) {
+          setHealthScore(data.length ? data[data.length - 1].healthScore : 0);
+        }
+      } else if (!cancelled) {
+        setHealthScore(userStorageService.getUserHealthScore());
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
     const storedReports = localStorage.getItem('arogya_reports');
     if (storedReports) {
-      const reports = JSON.parse(storedReports);
-      setReportsCount(reports.length);
+      try {
+        const reports = JSON.parse(storedReports);
+        setReportsCount(Array.isArray(reports) ? reports.length : 0);
+      } catch {
+        setReportsCount(0);
+      }
+    } else {
+      setReportsCount(0);
     }
   }, []);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setIsEditing(false);
-    // Here you would typically save to backend
-    console.log('Profile updated:', profileData);
+    if (!currentUser) return;
+    const nameTrim = profileData.name.trim();
+    const parts = nameTrim.split(/\s+/);
+    const firstName = parts[0] || '';
+    const lastName = parts.slice(1).join(' ') || '';
+
+    if (isFirebaseConfigured()) {
+      const res = await firebaseUpdateProfile(currentUser.id, {
+        firstName,
+        lastName,
+        phone: profileData.phone,
+        gender: profileData.gender,
+        bloodGroup: profileData.bloodGroup
+      });
+      if (res.success) await refreshProfile();
+      else alert(res.message);
+      if (res.success) {
+        void regenerateSummary(currentUser.id, {
+          firstName,
+          lastName,
+          bloodGroup: profileData.bloodGroup,
+          phone: profileData.phone,
+          emergencyContact: profileData.emergencyContact.phone
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    const res = userStorageService.updateUserProfile(currentUser.id, {
+      firstName,
+      lastName,
+      phone: profileData.phone,
+      gender: profileData.gender,
+      bloodGroup: profileData.bloodGroup,
+      email: profileData.email
+    });
+    if (res.success) await refreshProfile();
+    else alert(res.message);
+    if (res.success) {
+      void regenerateSummary(currentUser.id, {
+        firstName,
+        lastName,
+        bloodGroup: profileData.bloodGroup,
+        phone: profileData.phone,
+        emergencyContact: profileData.emergencyContact.phone
+      }).catch(() => {});
+    }
   };
 
   const handleInputChange = (field: string, value: string | number) => {
@@ -58,9 +155,9 @@ const ProfilePage: React.FC = () => {
     }));
   };
 
-  const handleSignOut = () => {
-    userStorageService.signOutUser();
-    window.location.href = '/';
+  const handleSignOut = async () => {
+    await signOutApp();
+    navigate('/');
   };
 
   const getHealthScoreColor = (score: number) => {
@@ -125,6 +222,23 @@ const ProfilePage: React.FC = () => {
 
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
+            {/* Digital Health Identity Card */}
+            {currentUser && (
+              <HealthIDCard 
+                user={{
+                  firstName: currentUser.firstName,
+                  lastName: currentUser.lastName,
+                  email: currentUser.email,
+                  phone: currentUser.phone,
+                  bloodGroup: currentUser.bloodGroup,
+                  gender: currentUser.gender,
+                  age: profileData.age || undefined,
+                  emergencyContact: profileData.emergencyContact,
+                  id: currentUser.id
+                }} 
+              />
+            )}
+
             {/* Personal Information */}
             <div className="bg-white rounded-2xl shadow-lg p-6">
               <div className="flex items-center justify-between mb-6">

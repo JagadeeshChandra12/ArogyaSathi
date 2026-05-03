@@ -1,10 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { FaEye, FaEyeSlash, FaEnvelope, FaLock, FaUser, FaPhone, FaCalendar, FaVenusMars, FaTint } from 'react-icons/fa';
 import { userStorageService } from '../services/userStorage';
+import { isFirebaseConfigured } from '../firebase/config';
+import { firebaseSignUp, firebaseSignInWithGoogle } from '../services/firebaseUserData';
+import { useAuth } from '../context/AuthContext';
+import GoogleAuthButton from '../components/GoogleAuthButton';
 
 const SignUpPage: React.FC = () => {
   const navigate = useNavigate();
+  const { refreshLocalUser, refreshProfile, user, staff, loading: authLoading } = useAuth();
+
+  useEffect(() => {
+    if (!authLoading && staff) {
+      navigate('/hospital', { replace: true });
+    }
+  }, [staff, authLoading, navigate]);
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate('/health', { replace: true });
+    }
+  }, [user, authLoading, navigate]);
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     firstName: '',
@@ -23,6 +40,7 @@ const SignUpPage: React.FC = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [submitMessage, setSubmitMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const handleInputChange = (field: string, value: string | boolean) => {
@@ -135,37 +153,73 @@ const SignUpPage: React.FC = () => {
       setSubmitMessage(null);
 
       try {
-        // Register user using the storage service
-        const result = userStorageService.registerUser({
-          firstName: formData.firstName,
-          lastName: formData.lastName,
-          email: formData.email,
-          phone: formData.phone,
-          password: formData.password,
-          dateOfBirth: formData.dateOfBirth,
-          gender: formData.gender,
-          bloodGroup: formData.bloodGroup
-        });
-
-        if (result.success) {
-          setSubmitMessage({ type: 'success', text: result.message });
-          // Auto-login the user and redirect to health page after 2 seconds
-          setTimeout(() => {
-            const loginResult = userStorageService.signInUser(formData.email, formData.password);
-            if (loginResult.success) {
-              navigate('/health');
-            } else {
-              navigate('/signin');
-            }
-          }, 2000);
+        if (isFirebaseConfigured()) {
+          const result = await firebaseSignUp(formData.email, formData.password, {
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+            email: formData.email,
+            phone: formData.phone,
+            dateOfBirth: formData.dateOfBirth,
+            gender: formData.gender,
+            bloodGroup: formData.bloodGroup
+          });
+          if (result.success) {
+            setSubmitMessage({ type: 'success', text: result.message });
+            const { staff: s } = await refreshProfile();
+            navigate(s ? '/hospital' : '/health', { replace: true });
+          } else {
+            setSubmitMessage({ type: 'error', text: result.message });
+          }
         } else {
-          setSubmitMessage({ type: 'error', text: result.message });
+          const result = userStorageService.registerUser({
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+            email: formData.email,
+            phone: formData.phone,
+            password: formData.password,
+            dateOfBirth: formData.dateOfBirth,
+            gender: formData.gender,
+            bloodGroup: formData.bloodGroup
+          });
+
+          if (result.success) {
+            setSubmitMessage({ type: 'success', text: result.message });
+            setTimeout(() => {
+              const loginResult = userStorageService.signInUser(formData.email, formData.password);
+              if (loginResult.success) {
+                refreshLocalUser();
+              }
+              navigate(loginResult.success ? '/health' : '/signin');
+            }, 800);
+          } else {
+            setSubmitMessage({ type: 'error', text: result.message });
+          }
         }
       } catch (error) {
         setSubmitMessage({ type: 'error', text: 'An unexpected error occurred. Please try again.' });
       } finally {
         setIsSubmitting(false);
       }
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    if (!isFirebaseConfigured()) return;
+    setGoogleLoading(true);
+    setSubmitMessage(null);
+    try {
+      const result = await firebaseSignInWithGoogle();
+      if (result.success) {
+        setSubmitMessage({ type: 'success', text: result.message });
+        const { staff: s } = await refreshProfile();
+        navigate(s ? '/hospital' : '/health', { replace: true });
+      } else {
+        setSubmitMessage({ type: 'error', text: result.message });
+      }
+    } catch {
+      setSubmitMessage({ type: 'error', text: 'Something went wrong. Please try again.' });
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -230,6 +284,27 @@ const SignUpPage: React.FC = () => {
 
         {/* Form */}
         <div className="bg-white rounded-2xl shadow-xl p-8">
+          {isFirebaseConfigured() && (
+            <>
+              <GoogleAuthButton
+                loading={googleLoading}
+                disabled={isSubmitting || googleLoading}
+                onClick={handleGoogleSignUp}
+                label="Sign up with Google"
+              />
+              <p className="mt-3 text-center text-xs text-gray-500">
+                Quick sign-up — you can complete your health profile later in your account.
+              </p>
+              <div className="relative my-6">
+                <div className="absolute inset-0 flex items-center" aria-hidden>
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-3 bg-white text-gray-500">Or register with email</span>
+                </div>
+              </div>
+            </>
+          )}
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Step 1: Personal Information */}
             {step === 1 && (
@@ -597,7 +672,7 @@ const SignUpPage: React.FC = () => {
                   </button>
                   <button
                     type="submit"
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || googleLoading}
                     className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isSubmitting ? 'Creating Account...' : 'Create Account'}
@@ -622,4 +697,4 @@ const SignUpPage: React.FC = () => {
   );
 };
 
-export default SignUpPage; 
+export default memo(SignUpPage);

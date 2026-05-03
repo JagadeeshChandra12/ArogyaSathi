@@ -10,7 +10,8 @@ interface MedicalChatRequest {
     name?: string;
   };
   conversationStage: 'welcome' | 'profile' | 'problem' | 'chat';
-  language?: 'telugu' | 'english';
+  language?: 'telugu' | 'english' | 'hindi';
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 interface MedicalChatResponse {
@@ -24,6 +25,7 @@ interface MedicalChatResponse {
 interface ImageAnalysisRequest {
   image: File;
   symptoms?: string[];
+  language?: 'telugu' | 'english' | 'hindi';
 }
 
 interface ImageAnalysisResponse {
@@ -37,6 +39,7 @@ interface ImageAnalysisResponse {
 interface ReportAnalysisRequest {
   report: File;
   reportType: 'blood' | 'urine' | 'xray' | 'ecg' | 'other';
+  language?: 'telugu' | 'english' | 'hindi';
 }
 
 interface ReportAnalysisResponse {
@@ -59,7 +62,7 @@ interface HealthDataAnalysisResponse {
 
 interface WebSearchRequest {
   query: string;
-  language?: 'telugu' | 'english';
+  language?: 'telugu' | 'english' | 'hindi';
 }
 
 interface WebSearchResponse {
@@ -72,16 +75,47 @@ interface WebSearchResponse {
   timestamp?: string;
 }
 
+function resolveMedicalApiBaseUrl(): string {
+  const fromEnv = import.meta.env.VITE_API_BASE_URL;
+  if (fromEnv != null && String(fromEnv).trim() !== '') {
+    return String(fromEnv).replace(/\/$/, '');
+  }
+  // Dev: same origin + Vite proxy → Express on :3001 (avoids wrong host / 404 from UI server)
+  if (import.meta.env.DEV) {
+    return '';
+  }
+  return 'http://localhost:3001';
+}
+
 // API Service class
 class MedicalApiService {
-  private baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+  private baseUrl = resolveMedicalApiBaseUrl();
   private retryAttempts = 3;
   private retryDelay = 1000;
+
+  private async parseJsonBody(response: Response, url: string): Promise<unknown> {
+    const raw = await response.text();
+    const ct = response.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const hint =
+        response.status === 502 || response.status === 504 || response.status === 503
+          ? ' Is the API running? In a separate terminal run: npm run server (port 3001).'
+          : '';
+      throw new Error(
+        `Bad response from ${url} (${response.status}). Expected JSON, got "${ct}".${hint} Body: ${raw.slice(0, 160)}`
+      );
+    }
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      throw new Error(`Invalid JSON from API (${response.status}): ${raw.slice(0, 160)}`);
+    }
+  }
 
   // Enhanced error handling with retry logic
   private async makeRequest<T>(url: string, options: RequestInit): Promise<T> {
     let lastError: Error | null = null;
-    
+
     for (let attempt = 1; attempt <= this.retryAttempts; attempt++) {
       try {
         const response = await fetch(url, {
@@ -92,22 +126,35 @@ class MedicalApiService {
           },
         });
 
+        const data = (await this.parseJsonBody(response, url)) as T;
+
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          const msg =
+            typeof (data as { error?: string })?.error === 'string'
+              ? (data as { error: string }).error
+              : response.statusText;
+          throw new Error(`HTTP ${response.status}: ${msg}`);
         }
 
-        const data = await response.json();
         return data;
       } catch (error) {
-        lastError = error as Error;
-        console.warn(`API request attempt ${attempt} failed:`, error);
-        
+        const err = error as Error;
+        const isNetwork =
+          err.name === 'TypeError' &&
+          (err.message.includes('Failed to fetch') || err.message.includes('NetworkError'));
+        lastError = isNetwork
+          ? new Error(
+              'Cannot reach the API. Start the backend: npm run server (must listen on port 3001), then refresh.'
+            )
+          : err;
+        console.warn(`API request attempt ${attempt} failed:`, lastError);
+
         if (attempt < this.retryAttempts) {
-          await new Promise(resolve => setTimeout(resolve, this.retryDelay * attempt));
+          await new Promise((resolve) => setTimeout(resolve, this.retryDelay * attempt));
         }
       }
     }
-    
+
     throw lastError || new Error('API request failed after all retry attempts');
   }
 
@@ -127,11 +174,27 @@ class MedicalApiService {
     try {
       const data = await this.makeRequest<MedicalChatResponse>(`${this.baseUrl}/api/medical-chat`, {
         method: 'POST',
-        body: JSON.stringify(request)
+        body: JSON.stringify({
+          ...request,
+          language: request.language || 'telugu'
+        })
       });
+
+      const isHindi = request.language === 'hindi';
+      const isTelugu = request.language === 'telugu';
+
+      const text =
+        typeof data.response === 'string' && data.response.trim()
+          ? data.response
+          : isHindi
+            ? 'सर्वर से कोई जवाब नहीं मिला। कृपया पुनः प्रयास करें।'
+            : isTelugu
+              ? 'సమాధానం లభించలేదు. దయచేసి మళ్లీ ప్రయత్నించండి.'
+              : 'No reply from the server. Please try again.';
 
       return {
         ...data,
+        response: text,
         timestamp: data.timestamp || new Date().toISOString()
       };
     } catch (error) {
@@ -156,9 +219,11 @@ class MedicalApiService {
       const hasEmergency = emergencyKeywords.some(keyword => messageLower.includes(keyword));
       
       if (hasEmergency) {
-        response = language === 'telugu'
-          ? '🚨 అత్యవసరం! మీకు తీవ్రమైన లక్షణాలు ఉన్నాయి. వెంటనే డాక్టర్ సలహా తీసుకోండి.'
-          : '🚨 EMERGENCY! You have severe symptoms. Seek immediate medical attention.';
+        response = language === 'hindi'
+          ? '🚨 आपातकाल! आपके गंभीर लक्षण हैं। तुरंत डॉक्टर से संपर्क करें।'
+          : language === 'telugu'
+            ? '🚨 అత్యవసరం! మీకు తీవ్రమైన లక్షణాలు ఉన్నాయి. వెంటనే డాక్టర్ సలహా తీసుకోండి.'
+            : '🚨 EMERGENCY! You have severe symptoms. Seek immediate medical attention.';
         severity = 'high';
         doctorRecommendation = true;
         suggestions = ['Call emergency services', 'Do not delay medical care'];
@@ -166,47 +231,61 @@ class MedicalApiService {
         // Stage-based responses
         switch (conversationStage) {
           case 'welcome':
-            response = language === 'telugu'
-              ? 'నమస్కారం! నేను మీ ఆరోగ్య సహాయకుడు సాతి. మీ ఆరోగ్యం గురించి మాట్లాడుకుందాం.'
-              : 'Hello! I am Sathi, your health assistant. Let\'s talk about your health.';
+            response = language === 'hindi'
+              ? 'नमस्ते! मैं आपका स्वास्थ्य मित्र साथी हूँ। आइए आपके स्वास्थ्य के बारे में बात करते हैं।'
+              : language === 'telugu'
+                ? 'నమస్కారం! నేను మీ ఆరోగ్య సహాయకుడు సాతి. మీ ఆరోగ్యం గురించి మాట్లాడుకుందాం.'
+                : 'Hello! I am Sathi, your health assistant. Let\'s talk about your health.';
             break;
             
           case 'profile':
-            response = language === 'telugu'
-              ? 'మీ వయస్సు మరియు బరువు తెలుసుకోవడం ముఖ్యం. ఇది మీ ఆరోగ్య అంచనాలకు సహాయపడుతుంది.'
-              : 'Knowing your age and weight is important for health assessments.';
+            response = language === 'hindi'
+              ? 'आपकी आयु और वजन जानना महत्वपूर्ण है। इससे आपके स्वास्थ्य मूल्यांकन में मदद मिलती है।'
+              : language === 'telugu'
+                ? 'మీ వయస్సు మరియు బరువు తెలుసుకోవడం ముఖ్యం. ఇది మీ ఆరోగ్య అంచనాలకు సహాయపడుతుంది.'
+                : 'Knowing your age and weight is important for health assessments.';
             break;
             
           case 'problem':
-            response = language === 'telugu'
-              ? 'మీకు ఏమైనా ఆరోగ్య సమస్యలు ఉన్నాయా? వివరంగా చెప్పండి.'
-              : 'Do you have any health problems? Please describe in detail.';
+            response = language === 'hindi'
+              ? 'क्या आपको कोई स्वास्थ्य समस्या है? कृपया विस्तार से बताएं।'
+              : language === 'telugu'
+                ? 'మీకు ఏమైనా ఆరోగ్య సమస్యలు ఉన్నాయా? వివరంగా చెప్పండి.'
+                : 'Do you have any health problems? Please describe in detail.';
             break;
             
           default:
             // Symptom-based responses
-            if (messageLower.includes('fever') || messageLower.includes('జ్వరం')) {
-              response = language === 'telugu'
-                ? 'జ్వరం గురించి: జ్వరం శరీరంలో ఇన్ఫెక్షన్ ఉందని సూచిస్తుంది. ఉష్ణోగ్రతను పర్యవేక్షించండి మరియు తగినంత ద్రవాలు తీసుకోండి.'
-                : 'About fever: Fever indicates infection in the body. Monitor temperature and stay hydrated.';
+            if (messageLower.includes('fever') || messageLower.includes('జ్వరం') || messageLower.includes('बुखार')) {
+              response = language === 'hindi'
+                ? 'बुखार के बारे में: बुखार शरीर में संक्रमण को दर्शाता है। तापमान की निगरानी करें और पर्याप्त तरल पदार्थ लें।'
+                : language === 'telugu'
+                  ? 'జ్వరం గురించి: జ్వరం శరీరంలో ఇన్ఫెక్షన్ ఉందని సూచిస్తుంది. ఉష్ణోగ్రతను పర్యవేక్షించండి మరియు తగినంత ద్రవాలు తీసుకోండి.'
+                  : 'About fever: Fever indicates infection in the body. Monitor temperature and stay hydrated.';
               severity = 'medium';
               suggestions = ['Monitor temperature', 'Stay hydrated', 'Rest well'];
-            } else if (messageLower.includes('headache') || messageLower.includes('తలనొప్పి')) {
-              response = language === 'telugu'
-                ? 'తలనొప్పి గురించి: తలనొప్పి సాధారణ సమస్య. ఒత్తిడి, నిద్ర లేకపోవడం, లేదా డిహైడ్రేషన్ కారణంగా కావచ్చు.'
-                : 'About headache: Headache is common. Can be due to stress, lack of sleep, or dehydration.';
+            } else if (messageLower.includes('headache') || messageLower.includes('తలనొప్పి') || messageLower.includes('सिरदर्द')) {
+              response = language === 'hindi'
+                ? 'सिरदर्द के बारे में: सिरदर्द आम है। तनाव, नींद की कमी या निर्जलीकरण के कारण हो सकता है।'
+                : language === 'telugu'
+                  ? 'తలనొప్పి గురించి: తలనొప్పి సాధారణ సమస్య. ఒత్తిడి, నిద్ర లేకపోవడం, లేదా డిహైడ్రేషన్ కారణంగా కావచ్చు.'
+                  : 'About headache: Headache is common. Can be due to stress, lack of sleep, or dehydration.';
               severity = 'low';
               suggestions = ['Rest in quiet place', 'Stay hydrated', 'Practice relaxation'];
-            } else if (messageLower.includes('cough') || messageLower.includes('దగ్గు')) {
-              response = language === 'telugu'
-                ? 'దగ్గు గురించి: దగ్గు శ్వాసనాళాలను శుభ్రం చేసే ప్రతిస్పందన. చాలా వాటికి వైరల్ ఇన్ఫెక్షన్లు కారణం.'
-                : 'About cough: Coughing is a reflex to clear airways. Most are caused by viral infections.';
+            } else if (messageLower.includes('cough') || messageLower.includes('దగ్గు') || messageLower.includes('खांसी')) {
+              response = language === 'hindi'
+                ? 'खांसी के बारे में: खांसी सांस की नली साफ करने की प्रतिक्रिया है। अधिकतर यह वायरल संक्रमण से होती है।'
+                : language === 'telugu'
+                  ? 'దగ్గు గురించి: దగ్గు శ్వాసనాళాలను శుభ్రం చేసే ప్రతిస్పందన. చాలా వాటికి వైరల్ ఇన్ఫెక్షన్లు కారణం.'
+                  : 'About cough: Coughing is a reflex to clear airways. Most are caused by viral infections.';
               severity = 'low';
               suggestions = ['Stay hydrated', 'Use honey', 'Avoid smoking'];
             } else {
-              response = language === 'telugu'
-                ? 'మీ ఆరోగ్యం గురించి జాగ్రత్తగా ఉండండి. నిరంతరం వ్యాయామం చేయండి మరియు సరైన ఆహారం తీసుకోండి.'
-                : 'Take care of your health. Exercise regularly and eat a balanced diet.';
+              response = language === 'hindi'
+                ? 'अपने स्वास्थ्य का ख्याल रखें। नियमित व्यायाम करें और पौष्टिक आहार लें।'
+                : language === 'telugu'
+                  ? 'మీ ఆరోగ్యం గురించి జాగ్రత్తగా ఉండండి. నిరంతరం వ్యాయామం చేయండి మరియు సరైన ఆహారం తీసుకోండి.'
+                  : 'Take care of your health. Exercise regularly and eat a balanced diet.';
               suggestions = ['Exercise regularly', 'Eat balanced diet', 'Get adequate sleep'];
             }
             break;
@@ -230,6 +309,9 @@ class MedicalApiService {
       formData.append('image', request.image);
       if (request.symptoms) {
         formData.append('symptoms', JSON.stringify(request.symptoms));
+      }
+      if (request.language) {
+        formData.append('language', request.language);
       }
 
       const data = await this.makeRequest<ImageAnalysisResponse>(`${this.baseUrl}/api/analyze-image`, {
@@ -301,6 +383,9 @@ class MedicalApiService {
       const formData = new FormData();
       formData.append('report', request.report);
       formData.append('reportType', request.reportType);
+      if (request.language) {
+        formData.append('language', request.language);
+      }
 
       const data = await this.makeRequest<ReportAnalysisResponse>(`${this.baseUrl}/api/analyze-report`, {
         method: 'POST',
@@ -427,9 +512,11 @@ class MedicalApiService {
       
       // Fallback response
       const language = request.language || 'english';
-      const fallbackResponse = language === 'telugu'
-        ? `"${request.query}" గురించి సమాచారం కనుగొనబడలేదు. దయచేసి వేరే పదాలతో ప్రయత్నించండి.`
-        : `Information about "${request.query}" not found. Please try with different keywords.`;
+      const fallbackResponse = language === 'hindi'
+        ? `"${request.query}" के बारे में जानकारी नहीं मिली। कृपया अलग कीवर्ड आज़माएं।`
+        : language === 'telugu'
+          ? `"${request.query}" గురించి సమాచారం కనుగొనబడలేదు. దయచేసి వేరే పదాలతో ప్రయత్నించండి.`
+          : `Information about "${request.query}" not found. Please try with different keywords.`;
       
       return {
         success: false,

@@ -1,10 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { FaEye, FaEyeSlash, FaEnvelope, FaLock } from 'react-icons/fa';
 import { userStorageService } from '../services/userStorage';
+import { isFirebaseConfigured } from '../firebase/config';
+import { firebaseSignIn, firebaseSignInWithGoogle } from '../services/firebaseUserData';
+import { useAuth } from '../context/AuthContext';
+import GoogleAuthButton from '../components/GoogleAuthButton';
 
 const SignInPage: React.FC = () => {
   const navigate = useNavigate();
+  const { refreshLocalUser, refreshProfile, user, staff, loading: authLoading } = useAuth();
+
+  useEffect(() => {
+    if (!authLoading && staff) {
+      navigate('/hospital', { replace: true });
+    }
+  }, [staff, authLoading, navigate]);
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate('/health', { replace: true });
+    }
+  }, [user, authLoading, navigate]);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -13,6 +30,7 @@ const SignInPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [submitMessage, setSubmitMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const handleInputChange = (field: string, value: string | boolean) => {
@@ -55,23 +73,50 @@ const SignInPage: React.FC = () => {
       setSubmitMessage(null);
 
       try {
-        // Sign in user using the storage service
-        const result = userStorageService.signInUser(formData.email, formData.password);
-
-        if (result.success) {
-          setSubmitMessage({ type: 'success', text: result.message });
-          // Redirect to health page after 1 second
-          setTimeout(() => {
-            navigate('/health');
-          }, 1000);
+        if (isFirebaseConfigured()) {
+          const result = await firebaseSignIn(formData.email, formData.password);
+          if (result.success) {
+            setSubmitMessage({ type: 'success', text: result.message });
+            const { staff: s } = await refreshProfile();
+            navigate(s ? '/hospital' : '/health', { replace: true });
+          } else {
+            setSubmitMessage({ type: 'error', text: result.message });
+          }
         } else {
-          setSubmitMessage({ type: 'error', text: result.message });
+          const result = userStorageService.signInUser(formData.email, formData.password);
+          if (result.success) {
+            refreshLocalUser();
+            setSubmitMessage({ type: 'success', text: result.message });
+            navigate('/health', { replace: true });
+          } else {
+            setSubmitMessage({ type: 'error', text: result.message });
+          }
         }
       } catch (error) {
         setSubmitMessage({ type: 'error', text: 'An unexpected error occurred. Please try again.' });
       } finally {
         setIsSubmitting(false);
       }
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    if (!isFirebaseConfigured()) return;
+    setGoogleLoading(true);
+    setSubmitMessage(null);
+    try {
+      const result = await firebaseSignInWithGoogle();
+      if (result.success) {
+        setSubmitMessage({ type: 'success', text: result.message });
+        const { staff: s } = await refreshProfile();
+        navigate(s ? '/hospital' : '/health', { replace: true });
+      } else {
+        setSubmitMessage({ type: 'error', text: result.message });
+      }
+    } catch {
+      setSubmitMessage({ type: 'error', text: 'Something went wrong. Please try again.' });
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -110,6 +155,24 @@ const SignInPage: React.FC = () => {
 
         {/* Sign In Form */}
         <div className="bg-white rounded-2xl shadow-xl p-8">
+          {isFirebaseConfigured() && (
+            <>
+              <GoogleAuthButton
+                loading={googleLoading}
+                disabled={isSubmitting}
+                onClick={handleGoogleSignIn}
+                label="Continue with Google"
+              />
+              <div className="relative my-6">
+                <div className="absolute inset-0 flex items-center" aria-hidden>
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-3 bg-white text-gray-500">Or sign in with email</span>
+                </div>
+              </div>
+            </>
+          )}
           <form className="space-y-6" onSubmit={handleSubmit}>
             {/* Email Field */}
             <div>
@@ -204,7 +267,7 @@ const SignInPage: React.FC = () => {
             <div>
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || googleLoading}
                 className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? 'Signing In...' : 'Sign In'}
@@ -241,4 +304,4 @@ const SignInPage: React.FC = () => {
   );
 };
 
-export default SignInPage; 
+export default memo(SignInPage);

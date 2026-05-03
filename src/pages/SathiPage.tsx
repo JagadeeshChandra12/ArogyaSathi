@@ -5,8 +5,6 @@ import {
   Mic, 
   MicOff, 
   Send, 
-  Image, 
-  FileText, 
   Heart, 
   Brain, 
   MessageCircle,
@@ -15,7 +13,6 @@ import {
   Volume2,
   VolumeX,
   Camera,
-  Upload,
   Globe
 } from 'lucide-react';
 import { medicalApiService } from '../services/medicalApi';
@@ -28,6 +25,7 @@ interface Message {
   type: 'text' | 'image' | 'voice';
   mediaUrl?: string;
   isTelugu?: boolean;
+  isHindi?: boolean;
 }
 
 interface UserProfile {
@@ -46,12 +44,13 @@ export default function SathiPage() {
   const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile>({});
-  const [conversationStage, setConversationStage] = useState<'welcome' | 'profile' | 'problem' | 'chat'>('welcome');
+  const conversationStage = 'chat' as const;
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>('');
-  const [selectedLanguage, setSelectedLanguage] = useState<'english' | 'telugu'>('telugu');
+  const [, setSelectedImage] = useState<File | null>(null);
+  const [, setImagePreview] = useState<string>('');
+  const [selectedLanguage, setSelectedLanguage] = useState<'english' | 'telugu' | 'hindi'>('telugu');
 
+  const chatContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -62,11 +61,11 @@ export default function SathiPage() {
   // Initialize speech recognition and voices
   useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = false;
-      recognitionRef.current.lang = selectedLanguage === 'telugu' ? 'te-IN' : 'en-US'; // Set language based on selection
+      recognitionRef.current.lang = selectedLanguage === 'telugu' ? 'te-IN' : selectedLanguage === 'hindi' ? 'hi-IN' : 'en-US';
 
       recognitionRef.current.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
@@ -135,41 +134,48 @@ export default function SathiPage() {
     };
   }, [selectedLanguage]);
 
+  // Chat scrolling logic and other effects
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    chatContainerRef.current?.scrollTo({
+      top: chatContainerRef.current.scrollHeight,
+      behavior: 'smooth'
+    });
   };
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  // Update welcome message when language changes
+  // Opening hint when language changes (not a forced onboarding script)
   useEffect(() => {
-    // Clear existing messages and add new welcome message
     setMessages([]);
     setTimeout(() => {
-      const welcomeMessage = selectedLanguage === 'telugu' 
-        ? 'నమస్కారం సాతి! మీరు ఎలా ఉన్నారు? మీ వయస్సు ఎంత?'
-        : 'Hello Sathi! How are you? What is your age?';
-      addBotMessage(welcomeMessage, selectedLanguage === 'telugu');
-    }, 1000);
+      const welcomeMessage =
+        selectedLanguage === 'hindi'
+          ? 'नमस्ते! मैं साथी हूँ। आज आपके स्वास्थ्य में क्या समस्या महसूस हो रही है?'
+          : selectedLanguage === 'telugu'
+            ? 'నమస్కారం! నేను సాతిని. ఈ రోజు మీ ఆరోగ్యానికి సంబంధించి ఏ విషయం మిమ్మల్ని ఇబ్బంది పెడుతోంది?'
+            : "Hi — I'm Sathi. What health concern or symptom can I help you with today?";
+      addBotMessage(welcomeMessage, selectedLanguage === 'telugu', selectedLanguage === 'hindi');
+    }, 400);
   }, [selectedLanguage]);
 
-  const addBotMessage = (text: string, isTelugu = false) => {
+  const addBotMessage = (text: string, isTelugu = false, isHindi = false) => {
     const newMessage: Message = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       text,
       sender: 'bot',
       timestamp: new Date(),
       type: 'text',
-      isTelugu
+      isTelugu,
+      isHindi
     };
     setMessages(prev => [...prev, newMessage]);
   };
 
   const addUserMessage = (text: string, type: 'text' | 'image' | 'voice' = 'text', mediaUrl?: string) => {
     const newMessage: Message = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       text,
       sender: 'user',
       timestamp: new Date(),
@@ -245,8 +251,8 @@ export default function SathiPage() {
       utterance.voice = selectedVoice;
     }
     
-    // Set language based on voice or default to Telugu
-    utterance.lang = selectedVoice?.lang || 'te-IN';
+    // Set language based on voice or default
+    utterance.lang = selectedVoice?.lang || (selectedLanguage === 'telugu' ? 'te-IN' : selectedLanguage === 'hindi' ? 'hi-IN' : 'en-US');
     utterance.rate = 0.9; // Slightly faster for better naturalness
     utterance.pitch = 1.1; // Slightly higher pitch for clarity
     utterance.volume = 1.0; // Full volume
@@ -264,10 +270,17 @@ export default function SathiPage() {
       currentUtteranceRef.current = null;
       console.log('Bot finished speaking');
       
+      // AUTO-LISTEN: If voice was enabled and it's a diagnostic flow, start listening for the answer
+      if (voiceEnabled) {
+        setTimeout(() => {
+          startListening();
+        }, 500);
+      }
+      
       // Process next item in queue
       setTimeout(() => {
         processVoiceQueue();
-      }, 300); // Reduced delay for better flow
+      }, 300);
     };
     
     utterance.onerror = (event) => {
@@ -292,18 +305,6 @@ export default function SathiPage() {
     console.log('Selected voice:', selectedVoice);
     console.log('Available voices:', availableVoices);
     speakText(testMessage);
-  };
-
-  const testApp = () => {
-    console.log('App test - checking all systems:');
-    console.log('Speech synthesis available:', 'speechSynthesis' in window);
-    console.log('Speech recognition available:', 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
-    console.log('Voice enabled:', voiceEnabled);
-    console.log('Is speaking:', isSpeaking);
-    console.log('Voice queue length:', voiceQueueRef.current.length);
-    
-    // Test basic functionality
-    addBotMessage('Test message - if you can see this, the app is working!', false);
   };
 
   const toggleVoice = () => {
@@ -334,26 +335,21 @@ export default function SathiPage() {
         message: input,
         userProfile,
         conversationStage,
-        language: selectedLanguage
+        language: selectedLanguage,
+        history: messages.slice(-10).map(m => ({
+          role: m.sender === 'user' ? 'user' : 'assistant',
+          content: m.text
+        }))
       });
       
       // Add bot response
-      addBotMessage(response.response, selectedLanguage === 'telugu');
+      addBotMessage(response.response, selectedLanguage === 'telugu', selectedLanguage === 'hindi');
       
       // Speak the response if voice is enabled
       if (voiceEnabled) {
         speakText(response.response);
       }
-      
-      // Update conversation stage based on response
-      if (conversationStage === 'welcome') {
-        setConversationStage('profile');
-      } else if (conversationStage === 'profile') {
-        setConversationStage('problem');
-      } else if (conversationStage === 'problem') {
-        setConversationStage('chat');
-      }
-      
+
       // Update user profile if age/weight mentioned
       const ageMatch = input.match(/(\d+)\s*(వయస్సు|సంవత్సరాలు|years?)/i);
       const weightMatch = input.match(/(\d+)\s*(కిలోలు|kg|kilos?)/i);
@@ -367,10 +363,12 @@ export default function SathiPage() {
       
     } catch (error) {
       console.error('Error processing user input:', error);
-      const errorMessage = selectedLanguage === 'telugu'
-        ? 'క్షమించండి, సమస్య జరిగింది. దయచేసి మళ్లీ ప్రయత్నించండి.'
-        : 'Sorry, an error occurred. Please try again.';
-      addBotMessage(errorMessage, selectedLanguage === 'telugu');
+      const errorMessage = selectedLanguage === 'hindi'
+        ? 'क्षमा करें, कोई त्रुटि उत्पन्न हुई। कृपया पुनः प्रयास करें।'
+        : selectedLanguage === 'telugu'
+          ? 'క్షమించండి, సమస్య జరిగింది. దయచేసి మళ్లీ ప్రయత్నించండి.'
+          : 'Sorry, an error occurred. Please try again.';
+      addBotMessage(errorMessage, selectedLanguage === 'telugu', selectedLanguage === 'hindi');
     } finally {
       setIsLoading(false);
     }
@@ -405,16 +403,17 @@ export default function SathiPage() {
       // Use the medical API service for image analysis
       const response = await medicalApiService.analyzeImage({
         image: file,
-        symptoms: []
+        symptoms: [],
+        language: selectedLanguage
       });
 
       setTimeout(() => {
         addBotMessage(`చిత్రం విశ్లేషణ: ${response.analysis}`, true);
         
         // Add recommendations if available
-        if (response.recommendations && response.recommendations.length > 0) {
+        if (response.recommendations?.length) {
           setTimeout(() => {
-            addBotMessage(`సూచనలు: ${response.recommendations.join(', ')}`, true);
+            addBotMessage(`సూచనలు: ${response.recommendations!.join(', ')}`, true);
           }, 1000);
         }
       }, 2000);
@@ -478,11 +477,12 @@ export default function SathiPage() {
                       <div className="relative">
                         <select
                           value={selectedLanguage}
-                          onChange={(e) => setSelectedLanguage(e.target.value as 'english' | 'telugu')}
+                          onChange={(e) => setSelectedLanguage(e.target.value as 'english' | 'telugu' | 'hindi')}
                           className="bg-white/20 text-white border border-white/30 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-white/50 appearance-none pr-8"
                         >
-                          <option value="telugu">తెలుగు</option>
                           <option value="english">English</option>
+                          <option value="telugu">తెలుగు</option>
+                          <option value="hindi">हिंदी</option>
                         </select>
                         <Globe className="absolute right-2 top-1/2 transform -translate-y-1/2 text-white/80" size={14} />
                       </div>
@@ -515,7 +515,7 @@ export default function SathiPage() {
                 </div>
 
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-4">
                   {messages.map((message) => (
                     <div
                       key={message.id}
@@ -575,9 +575,11 @@ export default function SathiPage() {
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
                         onKeyPress={handleKeyPress}
-                        placeholder={selectedLanguage === 'telugu' 
-                          ? "మీ సందేశాన్ని టైప్ చేయండి లేదా తెలుగులో మాట్లాడండి..."
-                          : "Type your message or speak in English..."
+                        placeholder={selectedLanguage === 'hindi' 
+                          ? "अपना संदेश टाइप करें या हिंदी में बोलें..." 
+                          : selectedLanguage === 'telugu' 
+                            ? "మీ సందేశాన్ని టైప్ చేయండి లేదా తెలుగులో మాట్లాడండి..."
+                            : "Type your message or speak in English..."
                         }
                         className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
@@ -664,8 +666,8 @@ export default function SathiPage() {
                     <div className="flex items-center justify-center gap-2">
                       {isListening ? <MicOff size={18} /> : <Mic size={18} />}
                       {isListening 
-                        ? (selectedLanguage === 'telugu' ? 'వాయిస్ ఆపండి' : 'Stop Voice Input')
-                        : (selectedLanguage === 'telugu' ? 'వాయిస్ ప్రారంభించండి' : 'Start Voice Input')
+                        ? (selectedLanguage === 'hindi' ? 'आवाज़ बंद करें' : selectedLanguage === 'telugu' ? 'వాయిస్ ఆపండి' : 'Stop Voice Input')
+                        : (selectedLanguage === 'hindi' ? 'आवाज़ शुरू करें' : selectedLanguage === 'telugu' ? 'వాయిస్ ప్రారంభించండి' : 'Start Voice Input')
                       }
                     </div>
                   </button>
@@ -775,8 +777,8 @@ export default function SathiPage() {
                 {/* Language Indicator */}
                 <div className="mt-6 text-center">
                   <div className="inline-flex items-center gap-2 bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm">
-                    <span>{selectedLanguage === 'telugu' ? '🇮🇳' : '🇺🇸'}</span>
-                    <span>{selectedLanguage === 'telugu' ? 'తెలుగు' : 'English'}</span>
+                    <span>{selectedLanguage === 'english' ? '🇺🇸' : '🇮🇳'}</span>
+                    <span>{selectedLanguage === 'hindi' ? 'हिंदी' : selectedLanguage === 'telugu' ? 'తెలుగు' : 'English'}</span>
                   </div>
                 </div>
               </div>

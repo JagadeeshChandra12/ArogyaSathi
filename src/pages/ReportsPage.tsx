@@ -1,11 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   ArrowLeft, 
-  Upload, 
-  FileText, 
+  FileText,
   Activity, 
-  TrendingUp, 
   AlertTriangle, 
   CheckCircle, 
   Clock,
@@ -13,16 +11,12 @@ import {
   Eye,
   Trash2,
   Plus,
-  Search,
-  Filter,
-  Calendar,
-  User,
-  Heart,
-  Brain,
-  Activity as ActivityIcon,
-  Languages
+  Search
 } from 'lucide-react';
 import { medicalApiService } from '../services/medicalApi';
+import HealthRecordCompanionPanel from '../components/HealthRecordCompanionPanel';
+import { useAuth } from '../context/AuthContext';
+import { registerReportForPatient } from '../services/healthPassportApi';
 
 interface Report {
   id: string;
@@ -41,11 +35,16 @@ interface Report {
     recommendationsTelugu?: string[];
     doctorVisit: boolean;
     urgency: 'routine' | 'soon' | 'immediate';
-    diagnosisPrecautions: { [abnormality: string]: { en: string; te: string } };
+    diagnosisSummary?: string;
+    diagnosisSummaryTelugu?: string;
+    precautions?: string[];
+    precautionsTelugu?: string[];
+    diagnosisPrecautions?: { [abnormality: string]: { en: string; te: string } };
   };
 }
 
 export default function ReportsPage() {
+  const { user } = useAuth();
   const [reports, setReports] = useState<Report[]>([]);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -54,6 +53,28 @@ export default function ReportsPage() {
   const [filterType, setFilterType] = useState<'all' | 'blood' | 'urine' | 'xray' | 'ecg' | 'other'>('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'analyzing' | 'completed' | 'abnormal'>('all');
   const [language, setLanguage] = useState<'english' | 'telugu' | 'both'>('both');
+
+  // Optimized statistics calculation
+  const stats = useMemo(() => {
+    return {
+      total: reports.length,
+      normal: reports.filter(r => r.status === 'completed' && r.analysis?.severity === 'normal').length,
+      abnormal: reports.filter(r => r.status === 'abnormal' || (r.analysis?.severity && r.analysis.severity !== 'normal')).length,
+      pending: reports.filter(r => r.status === 'pending' || r.status === 'analyzing').length
+    };
+  }, [reports]);
+
+  // Optimized filtering
+  const filteredReports = useMemo(() => {
+    return reports.filter(report => {
+      const matchesSearch = report.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesType = filterType === 'all' || report.type === filterType;
+      const matchesStatus = filterStatus === 'all' || 
+        (filterStatus === 'completed' && report.status === 'completed') ||
+        (filterStatus === 'abnormal' && report.status === 'abnormal');
+      return matchesSearch && matchesType && matchesStatus;
+    });
+  }, [reports, searchTerm, filterType, filterStatus]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -160,26 +181,40 @@ export default function ReportsPage() {
         ];
       }
 
-      // Add Telugu translations
-      const analysisWithTelugu = {
-        ...analysis,
-        summaryTelugu: getTeluguSummary(analysis.summary, report.type),
-        abnormalitiesTelugu: analysis.abnormalities.map(ab => getTeluguAbnormality(ab)),
-        recommendationsTelugu: analysis.recommendations.map(rec => getTeluguRecommendation(rec)),
-        diagnosisSummary,
-        diagnosisSummaryTelugu: getTeluguDiagnosis(diagnosisSummary),
-        precautions,
-        precautionsTelugu: precautions.map(prec => getTeluguPrecaution(prec))
-      };
-
       // Update report with analysis results
       setReports(prev => prev.map(r => 
         r.id === report.id ? { 
           ...r, 
           status: analysis.doctorVisit ? 'abnormal' : 'completed',
-          analysis: analysisWithTelugu
+          analysis: {
+            ...analysis,
+            summary: analysis.analysis,
+            summaryTelugu: getTeluguSummary(analysis.analysis, report.type),
+            abnormalitiesTelugu: analysis.abnormalities.map(ab => getTeluguAbnormality(ab)),
+            recommendationsTelugu: analysis.recommendations.map(rec => getTeluguRecommendation(rec)),
+            diagnosisSummary,
+            diagnosisSummaryTelugu: getTeluguDiagnosis(diagnosisSummary),
+            precautions,
+            precautionsTelugu: precautions.map(prec => getTeluguPrecaution(prec))
+          }
         } : r
       ));
+      if (user?.id) {
+        void registerReportForPatient({
+          patientId: user.id,
+          report: {
+            report_id: report.id,
+            file_name: report.name,
+            s3_url: URL.createObjectURL(report.file),
+            profile: {
+              firstName: user.firstName,
+              lastName: user.lastName,
+              bloodGroup: user.bloodGroup,
+              emergencyContact: user.phone
+            }
+          }
+        }).catch(() => {});
+      }
 
     } catch (error) {
       console.error('Error analyzing report:', error);
@@ -193,6 +228,7 @@ export default function ReportsPage() {
 
   // Telugu translation functions
   const getTeluguSummary = (summary: string, type: string): string => {
+    console.log('Translating summary:', summary);
     const summaries: { [key: string]: string } = {
       'blood': 'రక్తపు పరీక్షలు సరైనవి. మీ ఆరోగ్యం మంచిది.',
       'urine': 'మూత్రపు పరీక్షలు సరైనవి. మీ మూత్రపు పరీక్షలో ఏమైనా అసాధారణతలు లేవు.',
@@ -322,20 +358,7 @@ export default function ReportsPage() {
     }
   };
 
-  const filteredReports = reports.filter(report => {
-    const matchesSearch = report.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = filterType === 'all' || report.type === filterType;
-    const matchesStatus = filterStatus === 'all' || report.status === filterStatus;
-    return matchesSearch && matchesType && matchesStatus;
-  });
-
-  const stats = {
-    total: reports.length,
-    pending: reports.filter(r => r.status === 'pending').length,
-    analyzing: reports.filter(r => r.status === 'analyzing').length,
-    completed: reports.filter(r => r.status === 'completed').length,
-    abnormal: reports.filter(r => r.status === 'abnormal').length
-  };
+  // stats and filteredReports are now at the top for better organization and type safety
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-red-50 pt-20">
@@ -360,6 +383,10 @@ export default function ReportsPage() {
           </div>
         </div>
 
+        <div className="max-w-4xl mx-auto mb-8">
+          <HealthRecordCompanionPanel variant="patient" />
+        </div>
+
         <div className="max-w-7xl mx-auto">
           {/* Statistics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -377,7 +404,7 @@ export default function ReportsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Normal</p>
-                  <p className="text-2xl font-bold text-green-600">{stats.completed}</p>
+                  <p className="text-2xl font-bold text-green-600">{stats.normal}</p>
                 </div>
                 <CheckCircle className="text-green-600" size={24} />
               </div>
@@ -676,13 +703,13 @@ export default function ReportsPage() {
                     {selectedReport.analysis?.diagnosisPrecautions && (
                       <div>
                         <h4 className="font-semibold text-gray-800 mt-4 mb-2">Diagnosis & Precautions</h4>
-                        {selectedReport.analysis.abnormalities.map((ab, idx) => (
+                        {selectedReport.analysis.abnormalities.map((ab) => (
                           <div key={ab} className="mb-3">
                             <div className="font-medium text-red-700">{ab}</div>
-                            {selectedReport.analysis.diagnosisPrecautions[ab]?.en && (
+                            {selectedReport.analysis?.diagnosisPrecautions?.[ab]?.en && (
                               <div className="text-sm bg-gray-50 p-2 rounded mb-1">{selectedReport.analysis.diagnosisPrecautions[ab].en}</div>
                             )}
-                            {selectedReport.analysis.diagnosisPrecautions[ab]?.te && (
+                            {selectedReport.analysis?.diagnosisPrecautions?.[ab]?.te && (
                               <div className="text-sm bg-blue-50 p-2 rounded text-blue-800">{selectedReport.analysis.diagnosisPrecautions[ab].te}</div>
                             )}
                           </div>
