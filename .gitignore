@@ -24,5 +24,6 @@ dist-ssr
 *.sw?
 .env
 
-# Local API runtime store (do not commit patient data)
-data/
+# Local API runtime store (never commit real tokens / patient-linked JSON)
+data/health-passport-store.json
+data/summaries/

@@ -15,7 +15,9 @@ cd ArogyaSathi
 npm install
 ```
 
-Create a `.env` file in the project root with your Firebase (`VITE_FIREBASE_*`), optional `GEMINI_API_KEY`, and AWS/S3 variables if you use cloud storage. Never commit `.env` (it is gitignored).
+Copy `.env.example` to `.env` and fill in your Firebase (`VITE_FIREBASE_*`), optional `GEMINI_API_KEY`, `VITE_API_BASE_URL` (e.g. `http://localhost:3001`) if the frontend should call the health-passport API, and AWS/S3 variables if you use cloud storage. Never commit `.env` (it is gitignored).
+
+For the API’s JSON store, see `data/README.md` — use `data/health-passport-store.example.json` as a template; the real `health-passport-store.json` stays local only.
 
 ## Run locally
 
