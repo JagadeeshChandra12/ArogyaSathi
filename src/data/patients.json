@@ -1,0 +1,50 @@
+[
+  {
+    "id": 1,
+    "name": "Ravi Kumar",
+    "age": 42,
+    "gender": "Male",
+    "condition": "Diabetes, Regular Checkup",
+    "symptoms": "Increased thirst, frequent urination",
+    "medications": "Metformin 500mg twice daily",
+    "lastVisit": "2024-01-15",
+    "phone": "+91 98765 43210",
+    "email": "ravi.kumar@email.com"
+  },
+  {
+    "id": 2,
+    "name": "Sita Devi",
+    "age": 35,
+    "gender": "Female",
+    "condition": "High BP, Headache",
+    "symptoms": "Persistent headache, dizziness",
+    "medications": "Amlodipine 5mg daily",
+    "lastVisit": "2024-01-20",
+    "phone": "+91 98765 43211",
+    "email": "sita.devi@email.com"
+  },
+  {
+    "id": 3,
+    "name": "Rajesh Patel",
+    "age": 58,
+    "gender": "Male",
+    "condition": "Heart Disease, Follow-up",
+    "symptoms": "Chest pain, shortness of breath",
+    "medications": "Aspirin 75mg, Atorvastatin 20mg",
+    "lastVisit": "2024-01-18",
+    "phone": "+91 98765 43212",
+    "email": "rajesh.patel@email.com"
+  },
+  {
+    "id": 4,
+    "name": "Priya Sharma",
+    "age": 28,
+    "gender": "Female",
+    "condition": "Pregnancy Checkup",
+    "symptoms": "Morning sickness, fatigue",
+    "medications": "Folic acid, Iron supplements",
+    "lastVisit": "2024-01-22",
+    "phone": "+91 98765 43213",
+    "email": "priya.sharma@email.com"
+  }
+]
