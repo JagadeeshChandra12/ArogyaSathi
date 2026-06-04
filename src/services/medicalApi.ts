@@ -84,6 +84,10 @@ function resolveMedicalApiBaseUrl(): string {
   if (import.meta.env.DEV) {
     return '';
   }
+  // Production fallback: Use window origin if available to dynamically point to the deployed server
+  if (typeof window !== 'undefined' && window.location) {
+    return window.location.origin;
+  }
   return 'http://localhost:3001';
 }
 

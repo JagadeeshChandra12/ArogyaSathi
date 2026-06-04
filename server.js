@@ -1396,7 +1396,14 @@ app.get('/api/health', (req, res) => {
       'Health data insights',
       'Emergency symptom detection'
     ]
-  });
+});
+
+// Serve static files from React build directory
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// SPA Wildcard Route: serve index.html for any other request to support React Router
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 await ensureStoreLoaded();
