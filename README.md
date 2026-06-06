@@ -45,13 +45,13 @@ Below is the interaction flow between the Arogya Sathi client apps, backend serv
 
 ```mermaid
 graph TD
-    subgraph Frontend (React + Vite)
+    subgraph frontend ["Frontend (React + Vite)"]
         A[Patient Web App] -->|Interactive Chat / Voice| C(Vitals & AI Panels)
         A -->|Identity QR Code| D(React PDF Health ID)
         B[Hospital Portal] -->|QR Identity Scanner| B1(Patient History & Docs)
         B -->|Upload Documents| B2(Prescriptions & Records)
     end
-    subgraph Backend API (Express.js)
+    subgraph backend ["Backend API (Express.js)"]
         E[API Gateway /server.js]
         E -->|Firebase Auth & Sync| F[Firebase DB & Auth]
         E -->|Secure Records| G[(JSON Passport Store / local)]
