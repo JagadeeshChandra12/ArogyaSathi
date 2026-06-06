@@ -1,4 +1,4 @@
-# 🏥 Arogya Sathi (ఆరోగ్య సాథి)
+# 🏥 Arogya Sathi
 
 [![TypeScript](https://img.shields.io/badge/Language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/Frontend-React%2018-blue.svg)](https://react.dev/)
@@ -13,7 +13,7 @@
 ## 🌟 Key Capabilities
 
 ### 1. 🗣️ Multilingual AI Health Companion (Sathi)
-* **Interactive AI Chatbot**: Converses naturally in **Telugu (ఆరోగ్య సాథి)**, **Hindi (आरोग्य साथी)**, and **English**.
+* **Interactive AI Chatbot**: Converses naturally in **Telugu**, **Hindi**, and **English**.
 * **Intelligent Symptom Checker**: Educates patients on conditions, self-care, and medical topics.
 * **Smart Follow-ups**: Formulates context-aware questions to better gauge patient symptoms (e.g., duration, fever, pain).
 * **Wiki Integration & Fallbacks**: Utilizes Google Gemini AI for advanced medical conversation, with fallbacks to localized health intelligence and Wikipedia API query routing.
@@ -50,6 +50,7 @@ graph TD
         A -->|Identity QR Code| D(React PDF Health ID)
         B[Hospital Portal] -->|QR Identity Scanner| B1(Patient History & Docs)
         B -->|Upload Documents| B2(Prescriptions & Records)
+    end
     subgraph Backend API (Express.js)
         E[API Gateway /server.js]
         E -->|Firebase Auth & Sync| F[Firebase DB & Auth]
@@ -130,21 +131,21 @@ AWS_S3_BUCKET=your_s3_bucket_name
 
 ### Running Locally
 * **Run full stack (Frontend & API Server concurrently)**:
-  ```bash
-  npm run dev:full
-  ```
+   ```bash
+   npm run dev:full
+   ```
   * Web Client: `http://localhost:5173`
   * API Server: `http://localhost:3001`
 
 * **Run Frontend Client Only**:
-  ```bash
-  npm run dev
-  ```
+   ```bash
+   npm run dev
+   ```
 
 * **Run API Server Only**:
-  ```bash
-  npm run server
-  ```
+   ```bash
+   npm run server
+   ```
 
 ---
 
@@ -163,6 +164,8 @@ AWS_S3_BUCKET=your_s3_bucket_name
 3. Build and deploy:
    ```bash
    npm run build
+   ```
+   ```bash
    firebase deploy
    ```
 
@@ -171,10 +174,11 @@ AWS_S3_BUCKET=your_s3_bucket_name
    ```bash
    npx vercel
    ```
-2. Set `VITE_API_BASE_URL` to your deployed API server endpoint in Vercel's project dashboard dashboard.
+2. Set `VITE_API_BASE_URL` to your deployed API server endpoint in Vercel's project dashboard.
 
 ### Backend API Server Deployment (Node.js)
 The backend server (`server.js`) can be deployed to platforms like **Render**, **Railway**, or **Heroku**:
+* **Build Command**: `npm install; npm run build`
 * **Start Command**: `node server.js`
 * **Port**: Configure `PORT` environment variable (default: `3001`)
 * Ensure you add all database, AWS S3, and Gemini keys to the platform's Environment Variables panel.
