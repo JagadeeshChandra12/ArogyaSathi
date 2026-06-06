@@ -1396,6 +1396,7 @@ app.get('/api/health', (req, res) => {
       'Health data insights',
       'Emergency symptom detection'
     ]
+  });
 });
 
 // Serve static files from React build directory
